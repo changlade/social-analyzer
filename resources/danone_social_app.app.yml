@@ -1,0 +1,21 @@
+resources:
+  apps:
+    danone_social_app:
+      name: ${var.app_name}
+      description: >
+        Danone Social Impact Analyzer — marketing exploration app for business users.
+        Provides ESG insights, public sentiment timelines, CSR vs reality impact delta,
+        and an AI-powered report builder backed by the gold layer Delta tables.
+
+      source_code_path: ../apps/social-analyzer/backend
+
+      resources:
+        - name: sql-warehouse
+          description: SQL warehouse for querying gold layer tables
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+
+      permissions:
+        - level: CAN_USE
+          group_name: users

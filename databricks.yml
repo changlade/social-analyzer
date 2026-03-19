@@ -1,0 +1,72 @@
+bundle:
+  name: danone-social-analyzer
+
+workspace:
+  host: https://fevm-danonedemo.cloud.databricks.com
+
+include:
+  - resources/*.yml
+
+variables:
+  # ── Data layer ──────────────────────────────────────────────────────────────
+  catalog:
+    description: Unity Catalog name
+    default: danonedemo_catalog
+  schema:
+    description: Schema name for social analyzer tables
+    default: marketing
+  volume_name:
+    description: Volume name for scraping landing zone
+    default: social_landing
+
+  # ── Compute ─────────────────────────────────────────────────────────────────
+  warehouse_id:
+    description: SQL warehouse ID for the exploration app
+    default: 50e0bc7f9918a201
+
+  # ── AI Gateway ──────────────────────────────────────────────────────────────
+  gpt5_endpoint_url:
+    description: GPT 5.4 AI Gateway endpoint URL
+    default: "https://7474655187458913.ai-gateway.cloud.databricks.com/mlflow/v1/chat/completions"
+  ai_endpoint_name:
+    description: Registered external model name for ai_query()
+    default: danone-gpt5
+
+  # ── App ─────────────────────────────────────────────────────────────────────
+  app_name:
+    description: Databricks App name
+    default: danone-social-analyzer
+  secret_scope:
+    description: Secret scope holding the PAT used by the app
+    default: social-analyzer-secrets
+  secret_key:
+    description: Secret key for the Databricks PAT
+    default: databricks-pat
+
+  # ── Scraper ─────────────────────────────────────────────────────────────────
+  scraper_schedule_cron:
+    description: Cron expression for daily scraping job (UTC)
+    default: "0 4 * * *"
+
+targets:
+  # ── Development (default) ────────────────────────────────────────────────────
+  dev:
+    default: true
+    workspace:
+      host: https://fevm-danonedemo.cloud.databricks.com
+    variables:
+      catalog: danonedemo_catalog
+      schema: marketing
+      volume_name: social_landing
+      app_name: danone-social-analyzer
+
+  # ── Production ───────────────────────────────────────────────────────────────
+  prod:
+    workspace:
+      host: https://fevm-danonedemo.cloud.databricks.com
+    variables:
+      catalog: danonedemo_catalog
+      schema: marketing_prod
+      volume_name: social_landing_prod
+      app_name: danone-social-analyzer-prod
+      secret_scope: social-analyzer-secrets-prod

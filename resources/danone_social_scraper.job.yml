@@ -1,0 +1,58 @@
+resources:
+  jobs:
+    danone_social_scraper:
+      name: "[${bundle.target}] Danone Social - Daily Scraper"
+      description: >
+        Daily scraping job. Collects data via You.com MCP (semantic search + livecrawl
+        + direct URL extraction) and RSS feeds. Writes raw JSON records to the Delta
+        Lake bronze layer volume. Triggers the ETL pipeline upon completion.
+
+      max_concurrent_runs: 1
+      timeout_seconds: 7200
+
+      # Run daily at 04:00 UTC
+      schedule:
+        quartz_cron_expression: "0 0 4 * * ?"
+        timezone_id: "UTC"
+        pause_status: UNPAUSED
+
+      tasks:
+        - task_key: run_scraper
+          description: Execute the main scraper across all configured sources
+          spark_python_task:
+            python_file: ${workspace.root_path}/files/src/scraper/run_scraper.py
+            parameters:
+              - "--catalog"
+              - ${var.catalog}
+              - "--schema"
+              - ${var.schema}
+              - "--volume"
+              - ${var.volume_name}
+          environment_key: scraper_env
+          timeout_seconds: 5400
+
+        - task_key: trigger_etl_pipeline
+          description: Start the DLT pipeline update after scraping completes
+          depends_on:
+            - task_key: run_scraper
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.danone_social_etl.id}
+            full_refresh: false
+          timeout_seconds: 1800
+
+      environments:
+        - environment_key: scraper_env
+          spec:
+            client: "1"
+            dependencies:
+              - vaderSentiment>=3.3.2
+              - feedparser>=6.0.11
+              - requests>=2.32.0
+              - beautifulsoup4>=4.12.3
+              - lxml>=5.3.0
+              - langdetect>=1.0.9
+              - xxhash>=3.5.0
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

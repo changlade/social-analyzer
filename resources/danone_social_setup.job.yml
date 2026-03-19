@@ -1,0 +1,30 @@
+resources:
+  jobs:
+    danone_social_setup:
+      name: "[${bundle.target}] Danone Social - Setup (run once)"
+      description: >
+        One-time setup job: creates the marketing schema, volume for scraping data,
+        and registers the GPT 5.4 external model endpoint (danone-gpt5) in Mosaic AI
+        Model Serving so that ai_query() can use it in the DLT pipeline.
+
+      max_concurrent_runs: 1
+      timeout_seconds: 1800
+
+      tasks:
+        - task_key: setup_schema_and_endpoint
+          description: Create schema, volume, and register external AI model endpoint
+          notebook_task:
+            notebook_path: ${workspace.root_path}/files/src/setup/setup
+            source: WORKSPACE
+            base_parameters:
+              CATALOG: ${var.catalog}
+              SCHEMA: ${var.schema}
+              VOLUME_NAME: ${var.volume_name}
+              WAREHOUSE_ID: ${var.warehouse_id}
+              GPT5_ENDPOINT_URL: ${var.gpt5_endpoint_url}
+              AI_ENDPOINT_NAME: ${var.ai_endpoint_name}
+          timeout_seconds: 900
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

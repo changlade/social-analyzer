@@ -1,0 +1,31 @@
+resources:
+  pipelines:
+    danone_social_etl:
+      name: "[${bundle.target}] Danone Social Analyzer ETL"
+
+      catalog: ${var.catalog}
+      target: ${var.schema}
+
+      root_path: ../src/danone_social_etl
+      libraries:
+        - glob:
+            include: ../src/danone_social_etl/transformations/**
+
+      configuration:
+        # Volume path where the scraper deposits raw JSON files
+        social_landing_path: /Volumes/${var.catalog}/${var.schema}/${var.volume_name}/raw_scrapes
+        # External model endpoint name registered in Mosaic AI Model Serving
+        ai_endpoint_name: ${var.ai_endpoint_name}
+        catalog: ${var.catalog}
+        schema: ${var.schema}
+
+      serverless: true
+      # Triggered (not continuous) — runs after the daily scraping job completes
+      continuous: false
+      photon: false
+      channel: current
+      development: false
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

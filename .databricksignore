@@ -1,0 +1,14 @@
+# Exclude development artifacts from bundle upload
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.env
+.env.*
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+dist/
+.git/
