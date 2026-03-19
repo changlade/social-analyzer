@@ -16,14 +16,14 @@ export default function ImpactDelta() {
 
   useEffect(() => {
     setLoading(true);
-    Promise.all([
+    Promise.allSettled([
       getImpactDelta({ esg_category: esgCat || undefined }),
       getDeltaSummary(),
       getCSRClaims({ esg_category: esgCat || undefined }),
     ]).then(([d, s, c]) => {
-      setDeltas(d);
-      setSummary(s);
-      setClaims(c);
+      if (d.status === "fulfilled") setDeltas(d.value);
+      if (s.status === "fulfilled") setSummary(s.value);
+      if (c.status === "fulfilled") setClaims(c.value);
     }).finally(() => setLoading(false));
   }, [esgCat]);
 

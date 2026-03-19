@@ -11,9 +11,10 @@ export default function Sources() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const since = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    const since = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10);
     getSourceBreakdown({ date_from: since })
       .then(setSources)
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 

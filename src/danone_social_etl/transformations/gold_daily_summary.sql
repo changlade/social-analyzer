@@ -102,12 +102,12 @@ SELECT
   )                                                  AS brief_json_raw,
 
   -- Flat parsed fields for quick dashboard display
-  TRY(get_json_object(
+  get_json_object(
     ai_query('${ai_endpoint_name}',
       CONCAT('Return only JSON: {"headline": "<one sentence>"}. ',
              'Summarise ', CAST(total_articles AS STRING), ' articles about Danone ESG today, ',
              'sentiment=', CAST(ROUND(avg_sentiment,2) AS STRING))
-    ), '$.headline'))                                AS headline,
+    ), '$.headline')                                 AS headline,
 
   current_timestamp()                                AS _gold_at
 FROM topic_counts;

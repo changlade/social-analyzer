@@ -41,13 +41,12 @@ def get_impact_delta(
       latest_claim_date,
       latest_week,
       analysis_date,
-      -- Parse the rich delta JSON for the response
-      TRY(get_json_object(delta_json_raw, '$.alignment_label'))        AS alignment_label,
-      TRY(get_json_object(delta_json_raw, '$.gap_headline'))           AS gap_headline,
-      TRY(get_json_object(delta_json_raw, '$.official_narrative'))     AS official_narrative,
-      TRY(get_json_object(delta_json_raw, '$.public_narrative'))       AS public_narrative,
-      TRY(get_json_object(delta_json_raw, '$.marketing_opportunity'))  AS marketing_opportunity,
-      TRY(get_json_object(delta_json_raw, '$.risk_level'))             AS risk_level,
+      get_json_object(delta_json_raw, '$.alignment_label')        AS alignment_label,
+      get_json_object(delta_json_raw, '$.gap_headline')           AS gap_headline,
+      get_json_object(delta_json_raw, '$.official_narrative')     AS official_narrative,
+      get_json_object(delta_json_raw, '$.public_narrative')       AS public_narrative,
+      get_json_object(delta_json_raw, '$.marketing_opportunity')  AS marketing_opportunity,
+      get_json_object(delta_json_raw, '$.risk_level')             AS risk_level,
       delta_json_raw
     FROM gold_impact_delta
     WHERE {where}
@@ -105,7 +104,7 @@ def get_delta_summary() -> List[dict]:
       ROUND(AVG(alignment_score_quick), 1)          AS avg_alignment,
       COUNT(*)                                       AS theme_count,
       SUM(CASE WHEN alignment_score_quick <= 4 THEN 1 ELSE 0 END) AS divergent_themes,
-      TRY(get_json_object(MAX(delta_json_raw), '$.risk_level'))   AS max_risk_level
+      get_json_object(MAX(delta_json_raw), '$.risk_level')        AS max_risk_level
     FROM gold_impact_delta
     WHERE alignment_score_quick IS NOT NULL
     GROUP BY esg_category

@@ -5,3 +5,4 @@ beautifulsoup4>=4.12.3
 lxml>=5.3.0
 langdetect>=1.0.9
 xxhash>=3.5.0
+databricks-mcp>=0.1.0

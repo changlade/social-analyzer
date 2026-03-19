@@ -1,46 +1,37 @@
 """
 You.com MCP scraper — primary data collection source.
 
-Replaces: DDG + Jina Reader + Playwright (all three scrapers combined).
+Uses the official Databricks MCP client (databricks-mcp) to call the
+you-danone Unity Catalog connection via the Databricks-managed proxy.
+Authentication is handled automatically by WorkspaceClient.
 
-Uses the Databricks MCP gateway to call the you-danone UC connection,
-which proxies to https://api.you.com/mcp with the stored bearer token.
+The you-search MCP tool returns LLM-friendly formatted text (not JSON).
+We parse that text format here.
 
-Two You.com tools:
-  - you-search: semantic search + livecrawl (returns full Markdown per result)
-  - you-contents: direct URL batch extraction (used for known high-value URLs)
-
-The MCP gateway requires:  Accept: application/json, text/event-stream
-Response format: SSE stream — relevant data on lines starting with "data: "
+Ref: https://learn.microsoft.com/en-us/azure/databricks/generative-ai/mcp/external-mcp
 """
 
-import json
+import concurrent.futures
 import logging
-import os
+import re
 import time
 import random
-import requests
 from typing import Any
+
+from databricks.sdk import WorkspaceClient
+from databricks_mcp import DatabricksMCPClient
 
 from utils.delta_writer import build_record
 
 logger = logging.getLogger(__name__)
 
-YOUCOM_MCP_URL = "https://fevm-danonedemo.cloud.databricks.com/api/2.0/mcp/external/you-danone"
+YOU_CONNECTION_NAME = "you-danone"
 
-_MCP_HEADERS = {
-    "Content-Type": "application/json",
-    "Accept": "application/json, text/event-stream",
-}
-
-# ── Topic definitions ─────────────────────────────────────────────────────────
-# Each entry drives one you-search call.
-# site: operators, freshness, and count are tuned per topic.
+# ── Topic definitions ──────────────────────────────────────────────────────────
 
 YOUCOM_TOPICS: list[dict[str, Any]] = [
-    # Official / CSR — comprehensive coverage, yearly freshness
     {
-        "query": "Danone B Corp impact score assessment site:bcorporation.net",
+        "query": "Danone B Corp impact score assessment bcorporation.net",
         "freshness": "year", "count": 10,
         "source_type": "official", "topic": "bcorp_profile",
     },
@@ -55,18 +46,17 @@ YOUCOM_TOPICS: list[dict[str, Any]] = [
         "source_type": "official", "topic": "environmental",
     },
     {
-        "query": "Danone one planet one health social mission impact 2024",
+        "query": "Danone one planet one health social mission impact 2024 2025",
         "freshness": "year", "count": 8,
         "source_type": "official", "topic": "social_mission",
     },
-    # Benchmarks — target specific authoritative domains
     {
-        "query": "Danone site:worldbenchmarkingalliance.org",
+        "query": "Danone worldbenchmarkingalliance.org food agriculture benchmark",
         "freshness": "year", "count": 10,
         "source_type": "benchmark", "topic": "wba_benchmark",
     },
     {
-        "query": "Danone site:accesstonutrition.org",
+        "query": "Danone accesstonutrition.org nutrition index score",
         "freshness": "year", "count": 10,
         "source_type": "benchmark", "topic": "nutrition_index",
     },
@@ -75,9 +65,8 @@ YOUCOM_TOPICS: list[dict[str, Any]] = [
         "freshness": "year", "count": 8,
         "source_type": "benchmark", "topic": "human_rights_benchmark",
     },
-    # Public / Watchdog — worker sentiment, shorter freshness for recency
     {
-        "query": "Danone employee review working conditions salary site:glassdoor.com OR site:indeed.com",
+        "query": "Danone employee review working conditions glassdoor indeed 2024 2025",
         "freshness": "year", "count": 10,
         "source_type": "social", "topic": "worker_sentiment",
     },
@@ -92,7 +81,7 @@ YOUCOM_TOPICS: list[dict[str, Any]] = [
         "source_type": "ngo", "topic": "supply_chain",
     },
     {
-        "query": "Danone community impact developing countries Africa Asia social",
+        "query": "Danone community impact developing countries Africa Asia social 2024",
         "freshness": "year", "count": 8,
         "source_type": "ngo", "topic": "community_impact",
     },
@@ -101,25 +90,23 @@ YOUCOM_TOPICS: list[dict[str, Any]] = [
         "freshness": "year", "count": 8,
         "source_type": "news", "topic": "water_rights",
     },
-    # News — use month freshness to capture breaking developments
     {
         "query": "Danone layoffs restructuring employees France 2024 2025",
         "freshness": "month", "count": 8,
         "source_type": "news", "topic": "restructuring",
     },
     {
-        "query": "Danone ESG social impact news 2025",
+        "query": "Danone ESG social impact news 2025 2026",
         "freshness": "month", "count": 10,
         "source_type": "news", "topic": "general_news",
     },
     {
-        "query": "Danone CEO Antoine de Saint-Affrique strategy social 2024 2025",
+        "query": "Danone CEO Antoine de Saint-Affrique strategy social 2025",
         "freshness": "month", "count": 6,
         "source_type": "news", "topic": "strategy",
     },
 ]
 
-# High-value URLs to extract directly via you-contents (avoids search ranking noise)
 DIRECT_URLS: list[dict[str, str]] = [
     {"url": "https://www.bcorporation.net/en-us/find-a-b-corp/company/danone/",
      "source_type": "official", "topic": "bcorp_profile"},
@@ -133,49 +120,230 @@ DIRECT_URLS: list[dict[str, str]] = [
      "source_type": "official", "topic": "social_commitments"},
 ]
 
+# ── Thread pool for MCP calls (avoids asyncio.run() conflict with IPython loop) ─
 
-# ── MCP helpers ───────────────────────────────────────────────────────────────
-
-def _get_token() -> str:
-    token = os.environ.get("DATABRICKS_TOKEN") or os.environ.get("DATABRICKS_PAT", "")
-    if not token:
-        raise RuntimeError("DATABRICKS_TOKEN not set — cannot call You.com MCP")
-    return token
+_THREAD_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
-def _parse_mcp_response(raw: str) -> dict:
-    """Parse MCP SSE response: extract the JSON from the 'data: ...' line."""
-    for line in raw.split("\n"):
-        line = line.strip()
-        if line.startswith("data: "):
-            return json.loads(line[6:])
-    # Fallback: try parsing the whole body as JSON
-    return json.loads(raw)
+def _call_tool(client: DatabricksMCPClient, tool_name: str, arguments: dict):
+    """
+    Call an MCP tool in a ThreadPoolExecutor worker so DatabricksMCPClient
+    can use asyncio.run() without conflicting with the running IPython event loop
+    in Databricks serverless compute.
+    """
+    future = _THREAD_POOL.submit(client.call_tool, tool_name, arguments)
+    return future.result(timeout=120)
 
 
-def _call_mcp(tool_name: str, arguments: dict, timeout: int = 45) -> dict:
-    """Call a You.com MCP tool and return the parsed result dict."""
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "tools/call",
-        "params": {"name": tool_name, "arguments": arguments},
-        "id": 1,
+def _get_text(raw_result) -> str:
+    """Extract the text payload from a DatabricksMCPClient call_tool response."""
+    if hasattr(raw_result, "content") and raw_result.content:
+        return raw_result.content[0].text or ""
+    return ""
+
+
+# ── Text-format parser for you-search MCP output ─────────────────────────────
+#
+# The you-search MCP tool returns LLM-friendly formatted text, not JSON.
+# Each result block is prefixed by "WEB RESULTS:" or "NEWS RESULTS:".
+# Format:
+#   WEB RESULTS:
+#
+#   Title: <title>
+#   URL: <url>
+#   Published: <date>
+#   Description: <description>
+#   Snippets:
+#   - <snippet 1>
+#   - <snippet 2>
+#   Content:               ← optional livecrawl markdown
+#   <full page content>
+#
+
+_RESULT_BLOCK_RE = re.compile(
+    r'(?P<section_type>WEB|NEWS) RESULTS:\s*\n',
+    re.IGNORECASE,
+)
+_FIELD_RE = re.compile(r'^(?P<key>Title|URL|Published|Description):\s*(?P<val>.+)$', re.IGNORECASE)
+
+
+def _parse_result_block(block: str, section_type: str) -> dict:
+    """Parse one result block into a dict with url, title, date, body."""
+    url = title = published = ""
+    snippets: list[str] = []
+    content_lines: list[str] = []
+    in_snippets = False
+    in_content = False
+
+    for line in block.split("\n"):
+        stripped = line.strip()
+
+        if not stripped:
+            if in_content:
+                content_lines.append("")
+            in_snippets = False
+            continue
+
+        # Section transitions
+        if stripped.lower().startswith("snippets:"):
+            in_snippets = True
+            in_content = False
+            continue
+        if re.match(r'^(content|page content|markdown|livecrawl content)[:：]?\s*$', stripped, re.IGNORECASE):
+            in_snippets = False
+            in_content = True
+            continue
+
+        if in_snippets and stripped.startswith("- "):
+            snippets.append(stripped[2:])
+            continue
+
+        if in_content:
+            content_lines.append(line)
+            continue
+
+        # Key-value fields
+        m = _FIELD_RE.match(stripped)
+        if m:
+            key = m.group("key").lower()
+            val = m.group("val").strip()
+            if key == "url":
+                url = val
+            elif key == "title":
+                title = val
+            elif key == "published":
+                published = val
+            elif key == "description" and not snippets and not content_lines:
+                snippets.append(val)
+
+    # Build content: prefer livecrawl content, then snippets, then description
+    full_content = "\n".join(content_lines).strip()
+    body = full_content if len(full_content) > 200 else "\n\n".join(snippets)
+
+    return {
+        "url": url,
+        "title": title,
+        "published": published,
+        "body": body,
+        "section_type": section_type,
     }
-    headers = {**_MCP_HEADERS, "Authorization": f"Bearer {_get_token()}"}
-    resp = requests.post(YOUCOM_MCP_URL, headers=headers, json=payload, timeout=timeout)
-    resp.raise_for_status()
-    parsed = _parse_mcp_response(resp.text)
-    # Unwrap MCP result envelope
-    content = parsed.get("result", {}).get("content", [])
-    if content and content[0].get("type") == "text":
-        return json.loads(content[0]["text"])
-    return parsed.get("result", {})
 
 
-# ── Search scraper ────────────────────────────────────────────────────────────
+def _parse_youcom_text(
+    text: str,
+    source_type: str,
+    topic: str,
+    query: str,
+) -> list[dict[str, Any]]:
+    """Parse You.com MCP text-format search results into Delta Lake records."""
+    records = []
+    if not text or text.strip().startswith("Error:"):
+        return records
 
-def scrape_topic(topic: dict[str, Any]) -> list[dict[str, Any]]:
-    """Run one you-search call and convert results to Delta Lake records."""
+    # Split on section headers; each "WEB RESULTS:" or "NEWS RESULTS:" starts a new result
+    parts = _RESULT_BLOCK_RE.split(text)
+    # parts = [pre, section_type1, block1, section_type2, block2, ...]
+    # After the split, items alternate: text, section_type, text, section_type, ...
+    # Actually re.split with groups gives: [before, group1, after1, group2, after2, ...]
+
+    i = 1  # skip leading text before first match
+    while i < len(parts):
+        section_type = parts[i].upper()   # "WEB" or "NEWS"
+        block = parts[i + 1] if i + 1 < len(parts) else ""
+        i += 2
+
+        parsed = _parse_result_block(block, section_type)
+        url = parsed["url"]
+        body = parsed["body"]
+
+        if not url or len(body) < 80:
+            continue
+
+        records.append(build_record(
+            url=url,
+            title=parsed["title"] or url,
+            content=body[:20_000],
+            source_type=source_type,
+            search_topic=topic,
+            published_date=parsed["published"],
+            extra={
+                "result_section": section_type.lower(),
+                "scraper": "you-search",
+                "you_query": query,
+                "livecrawled": len(parsed["body"]) > 500,
+            },
+        ))
+
+    return records
+
+
+# ── Contents-format parser for you-contents MCP output ───────────────────────
+
+def _parse_youcom_contents(text: str, url_meta: dict[str, dict]) -> list[dict[str, Any]]:
+    """
+    Parse You.com MCP you-contents text output into records.
+    The format varies but typically has URL, Title, and Content sections.
+    """
+    records = []
+    if not text or text.strip().startswith("Error:"):
+        return records
+
+    # Split on URL: lines to get per-URL blocks
+    url_blocks = re.split(r'\nURL:\s*', "\n" + text)
+    for raw_block in url_blocks[1:]:
+        lines = raw_block.split("\n")
+        url = lines[0].strip()
+        if not url:
+            continue
+
+        title = ""
+        content_lines = []
+        in_content = False
+
+        for line in lines[1:]:
+            stripped = line.strip()
+            if re.match(r'^Title:\s*', stripped, re.IGNORECASE):
+                title = re.sub(r'^Title:\s*', "", stripped, flags=re.IGNORECASE)
+                continue
+            if re.match(r'^(content|markdown|page content)[:：]?\s*$', stripped, re.IGNORECASE):
+                in_content = True
+                continue
+            if in_content:
+                content_lines.append(line)
+            elif stripped and not title:
+                title = stripped
+
+        content = "\n".join(content_lines).strip()
+        if not content or len(content) < 80:
+            continue
+
+        meta = url_meta.get(url, {"source_type": "official", "topic": "direct_fetch"})
+        records.append(build_record(
+            url=url,
+            title=title or url,
+            content=content[:20_000],
+            source_type=meta["source_type"],
+            search_topic=meta["topic"],
+            extra={"scraper": "you-contents"},
+        ))
+
+    return records
+
+
+# ── MCP client factory ────────────────────────────────────────────────────────
+
+def _make_client() -> DatabricksMCPClient:
+    ws = WorkspaceClient()
+    host = ws.config.host.rstrip("/")
+    server_url = f"{host}/api/2.0/mcp/external/{YOU_CONNECTION_NAME}"
+    logger.info(f"You.com MCP server URL: {server_url}")
+    return DatabricksMCPClient(server_url=server_url, workspace_client=ws)
+
+
+# ── Search scraper ─────────────────────────────────────────────────────────────
+
+def scrape_topic(client: DatabricksMCPClient, topic: dict[str, Any]) -> list[dict[str, Any]]:
+    """Run one you-search call and return Delta Lake records."""
     query       = topic["query"]
     source_type = topic["source_type"]
     topic_name  = topic["topic"]
@@ -185,119 +353,67 @@ def scrape_topic(topic: dict[str, Any]) -> list[dict[str, Any]]:
     logger.info(f"you-search: '{query[:70]}' [freshness={freshness}]")
 
     try:
-        result = _call_mcp("you-search", {
-            "query": query,
-            "count": count,
-            "freshness": freshness,
-            "livecrawl": "all",
+        raw = _call_tool(client, "you-search", {
+            "query":            query,
+            "count":            count,
+            "freshness":        freshness,
+            "livecrawl":        "all",
             "livecrawl_formats": "markdown",
-            "safesearch": "off",
+            "safesearch":       "off",
         })
+        text = _get_text(raw)
     except Exception as exc:
         logger.error(f"  you-search failed for '{query[:50]}': {exc}")
         return []
 
-    records: list[dict] = []
-    results_dict = result.get("results", {})
-
-    for section_key in ("web", "news"):
-        for item in results_dict.get(section_key, []):
-            url     = item.get("url", "")
-            title   = item.get("title", "")
-            page_age = item.get("page_age", "")
-
-            # Full Markdown content from livecrawl (may be absent if crawl failed)
-            contents = item.get("contents", {}) or {}
-            markdown = contents.get("markdown", "")
-
-            # Fallback to snippets if livecrawl content is absent
-            snippets = item.get("snippets", []) or []
-            content  = markdown if len(markdown) > 200 else "\n\n".join(snippets)
-
-            if not url or len(content) < 100:
-                continue
-
-            records.append(build_record(
-                url=url,
-                title=title,
-                content=content[:20_000],
-                source_type=source_type,
-                search_topic=topic_name,
-                published_date=page_age,
-                extra={
-                    "result_section": section_key,
-                    "scraper": "you-search",
-                    "you_query": query,
-                    "livecrawled": bool(markdown),
-                },
-            ))
-
-    logger.info(f"  → {len(records)} records")
+    records = _parse_youcom_text(text, source_type, topic_name, query)
+    logger.info(f"  → {len(records)} records (response {len(text)} chars)")
     return records
 
 
-# ── Direct URL extractor ──────────────────────────────────────────────────────
+# ── Direct URL extractor ───────────────────────────────────────────────────────
 
-def extract_direct_urls() -> list[dict[str, Any]]:
-    """
-    Batch-fetch known high-value URLs via you-contents.
-    Returns full Markdown for each URL that succeeds.
-    """
-    urls = [entry["url"] for entry in DIRECT_URLS]
-    logger.info(f"you-contents: extracting {len(urls)} direct URLs")
+def extract_direct_urls(client: DatabricksMCPClient) -> list[dict[str, Any]]:
+    """Batch-extract known high-value URLs via you-contents."""
+    urls = [e["url"] for e in DIRECT_URLS]
+    url_meta = {e["url"]: e for e in DIRECT_URLS}
+    logger.info(f"you-contents: {len(urls)} direct URLs")
 
     try:
-        result = _call_mcp("you-contents", {
-            "urls": urls,
-            "formats": ["markdown"],
+        raw = _call_tool(client, "you-contents", {
+            "urls":          urls,
+            "formats":       ["markdown"],
             "crawl_timeout": 30,
         })
+        text = _get_text(raw)
     except Exception as exc:
         logger.error(f"  you-contents failed: {exc}")
         return []
 
-    url_meta = {entry["url"]: entry for entry in DIRECT_URLS}
-    records: list[dict] = []
-
-    for item in result.get("items", []):
-        url      = item.get("url", "")
-        title    = item.get("title", "") or url
-        markdown = item.get("markdown", "")
-        if not url or len(markdown) < 100:
-            continue
-        meta = url_meta.get(url, {"source_type": "official", "topic": "direct_fetch"})
-        records.append(build_record(
-            url=url,
-            title=title,
-            content=markdown[:20_000],
-            source_type=meta["source_type"],
-            search_topic=meta["topic"],
-            extra={"scraper": "you-contents"},
-        ))
-
-    logger.info(f"  → {len(records)} records from direct URLs")
+    records = _parse_youcom_contents(text, url_meta)
+    logger.info(f"  → {len(records)} records from direct URLs (response {len(text)} chars)")
     return records
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+# ── Main entry point ───────────────────────────────────────────────────────────
 
 def run_youcom_scraper() -> list[dict[str, Any]]:
     """
     Run all You.com topic searches + direct URL extractions.
-    Returns all collected records (not deduplicated — run_scraper.py handles that).
+    Uses DatabricksMCPClient with auto-detected WorkspaceClient credentials.
     """
+    client = _make_client()
     all_records: list[dict] = []
 
     # 1. Topic searches
     for i, topic in enumerate(YOUCOM_TOPICS):
-        records = scrape_topic(topic)
+        records = scrape_topic(client, topic)
         all_records.extend(records)
-        # Polite pause between API calls (0.5–2s — far below rate limits)
         if i < len(YOUCOM_TOPICS) - 1:
-            time.sleep(random.uniform(0.5, 2.0))
+            time.sleep(random.uniform(0.5, 1.5))
 
-    # 2. Direct URL extraction (batch call — much faster than individual fetches)
-    direct_records = extract_direct_urls()
+    # 2. Direct URL extraction
+    direct_records = extract_direct_urls(client)
     all_records.extend(direct_records)
 
     logger.info(f"You.com scraper total: {len(all_records)} records")

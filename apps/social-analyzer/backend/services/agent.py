@@ -30,12 +30,10 @@ from databricks_client import execute_query
 
 logger = logging.getLogger("danone.social.agent")
 
-_DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST", "https://fevm-danonedemo.cloud.databricks.com")
-_AI_ENDPOINT_URL = os.environ.get(
-    "GPT5_ENDPOINT_URL",
-    "https://7474655187458913.ai-gateway.cloud.databricks.com/mlflow/v1/chat/completions",
-)
-_AI_ENDPOINT_NAME = os.environ.get("AI_ENDPOINT_NAME", "danone-gpt5")
+_DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST", "https://fevm-danonedemo.cloud.databricks.com").rstrip("/")
+_SERVING_ENDPOINT = os.environ.get("AI_ENDPOINT_NAME", "databricks-gpt-5-4")
+_AI_ENDPOINT_URL  = f"{_DATABRICKS_HOST}/serving-endpoints/{_SERVING_ENDPOINT}/invocations"
+_AI_ENDPOINT_NAME = _SERVING_ENDPOINT
 _CATALOG = os.environ.get("CATALOG", "danonedemo_catalog")
 _SCHEMA  = os.environ.get("SCHEMA", "marketing")
 

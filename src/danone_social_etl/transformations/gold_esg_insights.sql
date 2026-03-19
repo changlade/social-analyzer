@@ -19,13 +19,13 @@ WITH sentiment_parsed AS (
   SELECT
     *,
     -- Parse the sentiment JSON returned by the LLM
-    TRY(from_json(sentiment_json_raw, 'STRUCT<
+    from_json(sentiment_json_raw, 'STRUCT<
       sentiment STRING,
       score DOUBLE,
       confidence DOUBLE,
       key_topics ARRAY<STRING>,
       danone_stance STRING
-    >'))                                             AS sentiment_struct
+    >')                                              AS sentiment_struct
   FROM LIVE.silver_sentiment_scored
 ),
 esg_classified AS (
@@ -75,6 +75,7 @@ SELECT
   url,
   title,
   content_preview,
+  clean_content,
   source_type,
   search_topic,
   esg_hint,
@@ -94,7 +95,7 @@ SELECT
   sentiment_json_raw,
 
   -- ── ESG Classification fields (parsed) ───────────────────────────────────
-  TRY(from_json(esg_json_raw, 'STRUCT<
+  from_json(esg_json_raw, 'STRUCT<
     esg_category    STRING,
     esg_sub_theme   STRING,
     confidence      DOUBLE,
@@ -102,18 +103,18 @@ SELECT
     is_official_csr BOOLEAN,
     impact_summary  STRING,
     credibility_score INT
-  >'))                                               AS esg_struct,
+  >')                                                AS esg_struct,
   esg_json_raw,
 
   -- ── Convenience flat columns ──────────────────────────────────────────────
-  TRY(get_json_object(esg_json_raw, '$.esg_category'))    AS esg_category,
-  TRY(get_json_object(esg_json_raw, '$.esg_sub_theme'))   AS esg_sub_theme,
-  TRY(CAST(get_json_object(esg_json_raw, '$.confidence') AS DOUBLE))
+  get_json_object(esg_json_raw, '$.esg_category')         AS esg_category,
+  get_json_object(esg_json_raw, '$.esg_sub_theme')        AS esg_sub_theme,
+  TRY_CAST(get_json_object(esg_json_raw, '$.confidence') AS DOUBLE)
                                                           AS esg_confidence,
-  TRY(CAST(get_json_object(esg_json_raw, '$.is_official_csr') AS BOOLEAN))
+  TRY_CAST(get_json_object(esg_json_raw, '$.is_official_csr') AS BOOLEAN)
                                                           AS is_official_csr,
-  TRY(get_json_object(esg_json_raw, '$.impact_summary'))  AS impact_summary,
-  TRY(CAST(get_json_object(esg_json_raw, '$.credibility_score') AS INT))
+  get_json_object(esg_json_raw, '$.impact_summary')       AS impact_summary,
+  TRY_CAST(get_json_object(esg_json_raw, '$.credibility_score') AS INT)
                                                           AS credibility_score,
 
   current_timestamp()                                AS _gold_at

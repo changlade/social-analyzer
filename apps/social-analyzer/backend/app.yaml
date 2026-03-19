@@ -1,17 +1,5 @@
-command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-
+command: ['python', '-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', '8000']
 env:
-  # Injected at deploy time by the Databricks App runtime
-  - name: DATABRICKS_HOST
-    valueFrom:
-      secretRef:
-        scope: social-analyzer-secrets
-        key: databricks-host
-  - name: DATABRICKS_TOKEN
-    valueFrom:
-      secretRef:
-        scope: social-analyzer-secrets
-        key: databricks-pat
   - name: WAREHOUSE_ID
     value: "50e0bc7f9918a201"
   - name: CATALOG
@@ -19,6 +7,6 @@ env:
   - name: SCHEMA
     value: "marketing"
   - name: AI_ENDPOINT_NAME
-    value: "danone-gpt5"
-  - name: GPT5_ENDPOINT_URL
-    value: "https://7474655187458913.ai-gateway.cloud.databricks.com/mlflow/v1/chat/completions"
+    value: "databricks-gpt-5-4"
+  # DATABRICKS_TOKEN and DATABRICKS_HOST are auto-injected by Databricks Apps runtime.
+  # Set them manually only for local development via a .env file (never commit secrets).

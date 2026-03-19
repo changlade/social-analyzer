@@ -66,14 +66,14 @@ exploded_claims AS (
     claim_obj
   FROM official_articles
   LATERAL VIEW explode(
-    TRY(from_json(claims_json_raw, 'ARRAY<STRUCT<
+    from_json(claims_json_raw, 'ARRAY<STRUCT<
       claim_text  STRING,
       esg_category STRING,
       sub_theme   STRING,
       metric      STRING,
       timeframe   STRING,
       claim_type  STRING
-    >>'))
+    >>')
   ) AS claim_obj
   WHERE claim_obj IS NOT NULL
 )

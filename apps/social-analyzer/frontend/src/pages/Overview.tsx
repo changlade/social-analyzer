@@ -21,17 +21,18 @@ export default function Overview() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const since = format(new Date(Date.now() - 30 * 864e5), "yyyy-MM-dd");
-    Promise.all([
+    // Use a wide window so we catch all available data, not just last 30 days
+    const since = format(new Date(Date.now() - 365 * 864e5), "yyyy-MM-dd");
+    Promise.allSettled([
       getKPIs({ date_from: since }),
       getSentimentTimeline({ granularity: "week", date_from: since }),
       getESGBreakdown({ date_from: since }),
       getDailyBrief(),
     ]).then(([k, t, b, br]) => {
-      setKpis(k);
-      setTimeline(t);
-      setBreakdown(b);
-      setBrief(br);
+      if (k.status === "fulfilled") setKpis(k.value);
+      if (t.status === "fulfilled") setTimeline(t.value);
+      if (b.status === "fulfilled") setBreakdown(b.value);
+      if (br.status === "fulfilled") setBrief(br.value);
     }).finally(() => setLoading(false));
   }, []);
 

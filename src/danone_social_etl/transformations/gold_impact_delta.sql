@@ -112,12 +112,12 @@ SELECT
   )                                                  AS delta_json_raw,
 
   -- ── Flat parsed columns ───────────────────────────────────────────────────
-  TRY(CAST(get_json_object(
+  TRY_CAST(get_json_object(
     ai_query('${ai_endpoint_name}',
       CONCAT('Return only a JSON object: {"alignment_score": <0-10>}. ',
              'Based on: claims="', LEFT(COALESCE(claims_combined,''), 500), '" ',
              'vs public sentiment score=', CAST(ROUND(COALESCE(period_avg_sentiment,0),2) AS STRING))
-    ), '$.alignment_score') AS INT))                 AS alignment_score_quick,
+    ), '$.alignment_score') AS INT)                  AS alignment_score_quick,
 
   current_timestamp()                                AS _gold_at
 FROM joined;

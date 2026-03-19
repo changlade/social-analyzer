@@ -29,8 +29,8 @@ variables:
     description: GPT 5.4 AI Gateway endpoint URL
     default: "https://7474655187458913.ai-gateway.cloud.databricks.com/mlflow/v1/chat/completions"
   ai_endpoint_name:
-    description: Registered external model name for ai_query()
-    default: danone-gpt5
+    description: Model serving endpoint for DLT ai_query() batch inference (Llama 3.3 supports batch inference; GPT-5.4 does not)
+    default: databricks-meta-llama-3-3-70b-instruct
 
   # ── App ─────────────────────────────────────────────────────────────────────
   app_name:

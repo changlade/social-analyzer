@@ -1,22 +1,26 @@
 -- ============================================================
--- Silver Layer: Cleaned, deduplicated articles
+-- Silver Layer: Cleaned articles (streaming)
 -- Danone Social Impact Analyzer
 -- ============================================================
--- Reads from bronze, applies:
---   1. URL-hash deduplication (APPLY CHANGES / SCD Type 1)
---   2. Text cleaning: strip HTML, normalise whitespace
---   3. Metadata normalisation: publish date, language
---   4. Content quality gate: minimum 150 chars
---   5. Source category mapping
+-- Reads from bronze streaming table, applies:
+--   1. Text cleaning: strip HTML, normalise whitespace
+--   2. Metadata normalisation: publish date, language
+--   3. Content quality gate: minimum 150 chars
+--   4. Source category mapping
+--
+-- Note: URL-level deduplication is handled by the Python scraper
+-- before writing to the landing zone, so duplicates within a single
+-- run are already eliminated upstream. Cross-run deduplication is
+-- handled in gold layer queries via GROUP BY / MAX().
 -- ============================================================
 
 CREATE OR REPLACE STREAMING TABLE silver_cleaned_articles (
   CONSTRAINT valid_content    EXPECT (clean_content IS NOT NULL AND length(clean_content) >= 150) ON VIOLATION DROP ROW,
   CONSTRAINT valid_url        EXPECT (url IS NOT NULL AND length(url) > 10)                       ON VIOLATION DROP ROW,
-  CONSTRAINT valid_source     EXPECT (source_type IN ('official','news','social','ngo','benchmark','rss')) ON VIOLATION WARN
+  CONSTRAINT valid_source     EXPECT (source_type IN ('official','news','social','ngo','benchmark','rss'))
 )
 CLUSTER BY (source_type, search_topic, scraped_date)
-COMMENT 'Cleaned, deduplicated scraped articles with normalised metadata — ready for LLM enrichment'
+COMMENT 'Cleaned scraped articles with normalised metadata — ready for LLM enrichment'
 TBLPROPERTIES (
   'quality'      = 'silver',
   'pipelines.autoOptimize.managed' = 'true'
@@ -47,7 +51,6 @@ SELECT
   )                                                  AS published_at,
   CAST(DATE(COALESCE(TRY_TO_TIMESTAMP(published_date), scraped_at)) AS DATE)
                                                      AS scraped_date,
-  -- Source type exactly as the scraper set it
   source_type,
   search_topic,
   -- Broad ESG category pre-hint from the search topic
@@ -61,21 +64,13 @@ SELECT
                           'general_news','esg_news','esg_investor','food_industry','annual_report') THEN 'Cross-ESG'
     ELSE 'Unknown'
   END                                                AS esg_hint,
-  -- Detected/declared language (default en)
   COALESCE(NULLIF(language, ''), 'en')               AS language,
-  -- Scraper traceability
   scraper,
   _scrape_run_id,
   scraped_at,
   run_timestamp,
   _ingested_at,
   current_timestamp()                                AS _silver_at
-FROM (
-  -- Deduplicate: keep the most recently scraped version of each URL
-  SELECT *,
-    ROW_NUMBER() OVER (PARTITION BY url_hash ORDER BY scraped_at DESC) AS rn
-  FROM STREAM(LIVE.bronze_raw_scraped_content)
-)
-WHERE rn = 1
-  AND raw_content IS NOT NULL
+FROM STREAM(LIVE.bronze_raw_scraped_content)
+WHERE raw_content IS NOT NULL
   AND LENGTH(TRIM(raw_content)) >= 150;

@@ -19,8 +19,16 @@ import os
 from datetime import datetime, timezone
 from typing import List, Dict, Any
 
-# Ensure local modules are importable when executed via spark-submit
-sys.path.insert(0, os.path.dirname(__file__))
+# Ensure local modules are importable (serverless uses IPython — __file__ may not be defined)
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+except NameError:
+    # Running in serverless/IPython — fall back to workspace path
+    import inspect
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))))
+    except (TypeError, OSError):
+        sys.path.insert(0, os.getcwd())
 
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
@@ -63,8 +71,13 @@ def main() -> None:
     logger.info("=== Danone Social Analyzer — Scraping Run ===")
     logger.info(f"Target volume: {volume_path}")
 
+    # In serverless, SparkSession may already exist; get or create safely
     spark = SparkSession.builder.appName("DanoneSocialScraper").getOrCreate()
-    spark.sparkContext.setLogLevel("WARN")
+    # sparkContext.setLogLevel is not supported on serverless — skip silently
+    try:
+        spark.sparkContext.setLogLevel("WARN")
+    except Exception:
+        pass
 
     run_ts = datetime.now(timezone.utc).isoformat()
     all_records: List[Dict[str, Any]] = []
@@ -86,24 +99,7 @@ def main() -> None:
     all_records = deduplicate(all_records)
     logger.info(f"Total after dedup:  {len(all_records)}")
 
-    if not all_records:
-        logger.warning("No records collected — pipeline will not be triggered")
-        return
-
-    # Stamp every record with the run timestamp
-    for rec in all_records:
-        rec["_run_timestamp"] = run_ts
-
-    # ── Write to volume as JSON-lines ─────────────────────────────────────────
-    written_path = write_records_to_volume(
-        records=all_records,
-        volume_path=volume_path,
-        sub_dir="raw_scrapes",
-        batch_tag="full_run",
-    )
-    logger.info(f"Written: {written_path}")
-
-    # ── Log summary via Spark ─────────────────────────────────────────────────
+    # ── Always write run log (even when 0 records — DLT MV depends on this table) ──
     summary = [
         {"source_type": "you_search", "count": len(youcom_records), "run_ts": run_ts},
         {"source_type": "rss",        "count": len(rss_records),    "run_ts": run_ts},
@@ -120,6 +116,24 @@ def main() -> None:
         .saveAsTable(f"`{args.catalog}`.`{args.schema}`.scraper_run_log")
     )
     logger.info("Run summary written to scraper_run_log")
+
+    if not all_records:
+        logger.warning("No records collected — skipping volume write and pipeline trigger")
+        logger.info("=== Scraping run complete (0 records) ===")
+        return
+
+    # Stamp every record with the run timestamp
+    for rec in all_records:
+        rec["_run_timestamp"] = run_ts
+
+    # ── Write to volume as JSON-lines ─────────────────────────────────────────
+    written_path = write_records_to_volume(
+        records=all_records,
+        volume_path=volume_path,
+        sub_dir="raw_scrapes",
+        batch_tag="full_run",
+    )
+    logger.info(f"Written: {written_path}")
     logger.info("=== Scraping run complete ===")
 
 

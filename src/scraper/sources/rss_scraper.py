@@ -12,13 +12,29 @@ Sources:
 """
 
 import logging
+import random
+import time
 import requests
 import feedparser
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 
-from utils.anti_detect import random_headers, polite_jitter
 from utils.delta_writer import build_record
+
+
+def random_headers() -> dict:
+    """Return a minimal realistic browser User-Agent header."""
+    agents = [
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    ]
+    return {"User-Agent": random.choice(agents), "Accept-Language": "en-US,en;q=0.9"}
+
+
+def polite_jitter() -> None:
+    """Sleep a short random interval between requests."""
+    time.sleep(random.uniform(0.3, 1.5))
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Send, StopCircle, User, Wrench, ChevronDown, ChevronUp } from "lucide-react";
+import { Bot, Send, StopCircle, User, Wrench, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { streamChat, type ChatMessage, type SSEEvent } from "../lib/chat";
 import { cn } from "../lib/utils";
 
@@ -79,10 +81,24 @@ function ToolCallBadge({ tc }: { tc: ToolCall }) {
   );
 }
 
+// ── Typing indicator (bouncing dots) ─────────────────────────────────────────
+
+function TypingIndicator() {
+  return (
+    <div className="flex items-center gap-1 px-4 py-3 bg-slate-800 border border-slate-700 rounded-2xl rounded-tl-sm w-fit">
+      <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:0ms]" />
+      <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:150ms]" />
+      <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:300ms]" />
+    </div>
+  );
+}
+
 // ── Message bubble ────────────────────────────────────────────────────────────
 
 function MessageBubble({ msg }: { msg: Message }) {
   const isUser = msg.role === "user";
+  const isThinking = !isUser && msg.isStreaming && !msg.content && (!msg.toolCalls || msg.toolCalls.length === 0);
+
   return (
     <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
       {/* Avatar */}
@@ -92,7 +108,13 @@ function MessageBubble({ msg }: { msg: Message }) {
           isUser ? "bg-blue-600" : "bg-slate-700",
         )}
       >
-        {isUser ? <User size={15} /> : <Bot size={15} />}
+        {isUser ? (
+          <User size={15} />
+        ) : msg.isStreaming ? (
+          <Loader2 size={15} className="animate-spin text-blue-400" />
+        ) : (
+          <Bot size={15} />
+        )}
       </div>
 
       {/* Content */}
@@ -106,17 +128,71 @@ function MessageBubble({ msg }: { msg: Message }) {
           </div>
         )}
 
+        {/* Typing indicator: shown while waiting for first token */}
+        {isThinking && <TypingIndicator />}
+
         {/* Text bubble */}
         {msg.content && (
           <div
             className={cn(
-              "rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap",
+              "rounded-2xl px-4 py-3 text-sm leading-relaxed",
               isUser
-                ? "bg-blue-600 text-white rounded-tr-sm"
+                ? "bg-blue-600 text-white rounded-tr-sm whitespace-pre-wrap"
                 : "bg-slate-800 text-slate-100 rounded-tl-sm border border-slate-700",
             )}
           >
-            {msg.content}
+            {isUser ? (
+              msg.content
+            ) : (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({ children }) => <h1 className="text-base font-bold text-white mt-3 mb-1 first:mt-0">{children}</h1>,
+                  h2: ({ children }) => <h2 className="text-sm font-bold text-white mt-3 mb-1 first:mt-0">{children}</h2>,
+                  h3: ({ children }) => <h3 className="text-sm font-semibold text-slate-200 mt-2 mb-1 first:mt-0">{children}</h3>,
+                  p:  ({ children }) => <p className="mb-2 last:mb-0 text-slate-100 leading-relaxed">{children}</p>,
+                  ul: ({ children }) => <ul className="mb-2 space-y-0.5 pl-4 list-disc marker:text-blue-400">{children}</ul>,
+                  ol: ({ children }) => <ol className="mb-2 space-y-0.5 pl-4 list-decimal marker:text-blue-400">{children}</ol>,
+                  li: ({ children }) => <li className="text-slate-200 leading-relaxed">{children}</li>,
+                  strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+                  em: ({ children }) => <em className="italic text-slate-300">{children}</em>,
+                  code: ({ children, className }) => {
+                    const isBlock = className?.includes("language-");
+                    return isBlock ? (
+                      <code className="block bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 my-2 text-xs font-mono text-green-300 overflow-x-auto whitespace-pre">
+                        {children}
+                      </code>
+                    ) : (
+                      <code className="bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono text-amber-300">
+                        {children}
+                      </code>
+                    );
+                  },
+                  pre: ({ children }) => <>{children}</>,
+                  blockquote: ({ children }) => (
+                    <blockquote className="border-l-2 border-blue-500 pl-3 my-2 text-slate-400 italic">
+                      {children}
+                    </blockquote>
+                  ),
+                  hr: () => <hr className="border-slate-700 my-3" />,
+                  a: ({ href, children }) => (
+                    <a href={href} target="_blank" rel="noopener noreferrer"
+                      className="text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors">
+                      {children}
+                    </a>
+                  ),
+                  table: ({ children }) => (
+                    <div className="overflow-x-auto my-2">
+                      <table className="text-xs border-collapse w-full">{children}</table>
+                    </div>
+                  ),
+                  th: ({ children }) => <th className="border border-slate-600 bg-slate-700 px-2 py-1 text-left font-semibold text-slate-200">{children}</th>,
+                  td: ({ children }) => <td className="border border-slate-700 px-2 py-1 text-slate-300">{children}</td>,
+                }}
+              >
+                {msg.content}
+              </ReactMarkdown>
+            )}
             {msg.isStreaming && (
               <span className="inline-block w-1.5 h-4 bg-blue-400 animate-pulse ml-0.5 align-text-bottom" />
             )}
@@ -288,9 +364,9 @@ export default function Chat() {
           <p className="text-xs text-slate-400">Powered by GPT 5.4 · You.com · Brightdata</p>
         </div>
         {isStreaming && (
-          <span className="ml-auto text-xs text-blue-400 flex items-center gap-1.5 animate-pulse">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-            Thinking...
+          <span className="ml-auto text-xs text-blue-400 flex items-center gap-2">
+            <Loader2 size={13} className="animate-spin" />
+            Thinking…
           </span>
         )}
       </div>
