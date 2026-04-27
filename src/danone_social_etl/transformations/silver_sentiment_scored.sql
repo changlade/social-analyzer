@@ -64,4 +64,4 @@ SELECT
   current_timestamp()                                AS _scored_at
 FROM LIVE.silver_cleaned_articles
 WHERE clean_content IS NOT NULL
-  AND content_length >= 150;
+  AND COALESCE(content_length, LENGTH(clean_content)) >= 150;

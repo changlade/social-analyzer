@@ -62,6 +62,8 @@ SELECT
                           'impact_investment','strategy') THEN 'Governance'
     WHEN search_topic IN ('wba_index','wba_food_agriculture','wba_just_transition','wba_benchmark',
                           'general_news','esg_news','esg_investor','food_industry','annual_report') THEN 'Cross-ESG'
+    WHEN search_topic IN ('product_recall','crisis_apac','regulatory_action',
+                          'crisis_media','market_impact') THEN 'Crisis'
     ELSE 'Unknown'
   END                                                AS esg_hint,
   COALESCE(NULLIF(language, ''), 'en')               AS language,
