@@ -30,7 +30,7 @@ from databricks_client import execute_query
 
 logger = logging.getLogger("danone.social.agent")
 
-_DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST", "https://fevm-danonedemo.cloud.databricks.com").rstrip("/")
+_DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST", "https://fe-vm-vdm-serverless-nmmvdg.cloud.databricks.com").rstrip("/")
 _SERVING_ENDPOINT = os.environ.get("AI_ENDPOINT_NAME", "databricks-gpt-5-4")
 _AI_ENDPOINT_URL  = f"{_DATABRICKS_HOST}/serving-endpoints/{_SERVING_ENDPOINT}/invocations"
 _AI_ENDPOINT_NAME = _SERVING_ENDPOINT
@@ -145,29 +145,89 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_news_events",
+            "description": (
+                "Query recent breaking news events, product recalls, regulatory sanctions, "
+                "and crises involving Danone from the gold_news_events table. "
+                "This table is specifically designed for crisis and incident analysis and includes:\n"
+                "  - event_type: recall | regulatory | financial | reputational | positive | other\n"
+                "  - severity: low | medium | high | critical\n"
+                "  - affected_region: geographic region (e.g. APAC, Europe, Global)\n"
+                "  - affected_product: specific product or product line\n"
+                "  - financial_impact_estimate: estimated financial exposure\n"
+                "  - recommended_response: AI-suggested communication action\n"
+                "  - sentiment_score, impact_summary, credibility_score\n"
+                "Use this tool (instead of query_gold_layer) for any question about:\n"
+                "  - Product recalls or safety alerts\n"
+                "  - Regulatory fines or investigations (FDA, EFSA, etc.)\n"
+                "  - APAC crisis events or infant formula issues\n"
+                "  - Media controversies and reputational risks\n"
+                "  - Market/investor impact from negative events\n"
+                "Always include LIMIT. Filter by severity or event_type when relevant."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {
+                        "type": "string",
+                        "description": (
+                            "Read-only SQL (SELECT only). Always include LIMIT. "
+                            "Table name: gold_news_events. "
+                            "Key columns: event_type, severity, affected_region, affected_product, "
+                            "financial_impact_estimate, recommended_response, title, url, "
+                            "scraped_date, sentiment_score, impact_summary."
+                        ),
+                    },
+                },
+                "required": ["sql"],
+            },
+        },
+    },
 ]
 
-SYSTEM_PROMPT = """You are an expert ESG and sustainability analyst for Danone, powered by AI.
+SYSTEM_PROMPT = """You are an expert ESG and crisis communications analyst for Danone, powered by AI.
 
 Your role is to help marketing and strategy teams understand:
 - Danone's official CSR/ESG claims and commitments
 - What the public, NGOs, employees, and media actually think about Danone's social impact
 - Gaps between corporate narrative and public perception (the "Impact Delta")
+- Breaking news events: product recalls, regulatory actions, APAC crises, reputational risks
 - ESG risks and marketing opportunities
 
-You have access to four tools:
-1. youcom_search — search the web for real-time information
-2. youcom_scrape — extract full content from specific URLs
-3. brightdata_scrape — scrape difficult sites (Glassdoor, LinkedIn, paywalled sources)
-4. query_gold_layer — query pre-processed ESG insights from our Delta Lake gold layer
+You have access to six tools:
 
-Guidelines:
-- Always use tools to ground your answers in real data. Don't make up statistics.
-- For quantitative questions, prefer query_gold_layer first (it has processed data).
-- For recent news or specific URLs, use youcom_search or youcom_scrape.
-- For paywalled / blocked sites, use brightdata_scrape.
+**For data already ingested in our pipeline (fast, structured):**
+1. query_gold_layer — query Gold Delta tables (ESG insights, CSR claims, impact delta, daily summary)
+2. query_news_events — query gold_news_events table for recalls, regulatory actions, crises (preferred for incident questions)
+
+**For live web search (real-time, external):**
+3. youcom_search — semantic web search. Use with appropriate freshness:
+   - freshness="day"   → breaking news within 24h (use for active crises/recalls)
+   - freshness="week"  → past 7 days (use for recent incidents/regulatory actions)
+   - freshness="month" → past 30 days (use for recent ESG news)
+   - freshness="year"  → past year (use for strategic/annual reports)
+4. youcom_scrape — extract full content from specific URLs
+
+**For difficult sites (residential proxy):**
+5. brightdata_scrape — scrape Glassdoor, LinkedIn, paywalled pages
+6. brightdata_search — Google search via Brightdata
+
+**Tool selection guidelines:**
+- Product recalls, safety alerts, APAC infant formula issues → use query_news_events FIRST, then youcom_search with freshness="week" or "day"
+- Regulatory fines, FDA/EFSA investigations → query_news_events + youcom_search freshness="week"
+- Media controversy, reputational crisis → query_news_events + youcom_search freshness="day"
+- ESG strategy, annual reports, B Corp scores → query_gold_layer + youcom_search freshness="year"
+- Employee sentiment, working conditions → query_gold_layer + brightdata_scrape for Glassdoor
+- Impact gap analysis → query_gold_layer (gold_impact_delta table)
+
+**General guidelines:**
+- Always use tools to ground your answers in real data. Never fabricate statistics or events.
 - Cite your sources. Include URLs when referencing web content.
-- Be concise but insightful. Flag risks and opportunities clearly.
+- For crisis questions, combine query_news_events (what we've already indexed) with a fresh youcom_search to check for very recent developments.
+- Be concise but insightful. Flag severity, affected regions, and recommended responses clearly.
 - Respond in the same language as the user's question."""
 
 
@@ -221,7 +281,7 @@ async def _dispatch_tool(name: str, args: dict) -> str:
                 items.append(f"- **{title}**\n  {url}\n  {snippet}")
             return "\n".join(items) if items else "No search results."
 
-        elif name == "query_gold_layer":
+        elif name in ("query_gold_layer", "query_news_events"):
             sql = args["sql"].strip()
             # Safety guard: only allow SELECT statements
             if not sql.upper().lstrip().startswith("SELECT"):

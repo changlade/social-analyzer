@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import insights, sentiment, impact_delta, sources, reports, chat
+from routers import insights, sentiment, impact_delta, sources, reports, chat, news_events
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,6 +49,7 @@ app.include_router(impact_delta.router,  prefix="/api/impact-delta",  tags=["Imp
 app.include_router(sources.router,       prefix="/api/sources",       tags=["Sources"])
 app.include_router(reports.router,       prefix="/api/reports",       tags=["Reports"])
 app.include_router(chat.router,          prefix="/api/chat",          tags=["Chat"])
+app.include_router(news_events.router,   prefix="/api/news-events",   tags=["News Events"])
 
 
 @app.get("/api/health")

@@ -73,6 +73,24 @@ export const getCSRClaims = (p?: { esg_category?: string; claim_type?: string })
 export const getSourceBreakdown = (p?: { date_from?: string; date_to?: string }) =>
   get<SourceRecord[]>("/sources", p);
 
+// ── News Events ───────────────────────────────────────────────────────────────
+export const getNewsEvents = (p?: {
+  severity?: string;
+  event_type?: string;
+  days?: number;
+  limit?: number;
+  offset?: number;
+}) => get<{ total: number; offset: number; limit: number; items: NewsEvent[] }>("/news-events", p);
+
+export const getNewsEventsSummary = (days?: number) =>
+  get<NewsEventsSummary>("/news-events/summary", days !== undefined ? { days } : undefined);
+
+export const getNewsEventsTimeline = (days?: number) =>
+  get<NewsEventsTimeline>("/news-events/timeline", days !== undefined ? { days } : undefined);
+
+export const getLatestCritical = (limit?: number) =>
+  get<{ items: NewsEvent[]; has_alerts: boolean }>("/news-events/latest-critical", limit !== undefined ? { limit } : undefined);
+
 // ── Reports ───────────────────────────────────────────────────────────────────
 export const getDailyBrief = (date?: string) =>
   get<DailyBrief>("/reports/daily-brief", date ? { date } : undefined);
@@ -223,6 +241,49 @@ export interface ReportRequest {
   audience: string;
   custom_prompt?: string;
   max_articles?: number;
+}
+
+export interface NewsEvent {
+  article_id: string;
+  url: string;
+  title: string;
+  content_preview: string | null;
+  source_type: string;
+  search_topic: string;
+  scraped_date: string;
+  published_at: string | null;
+  sentiment_label: string | null;
+  sentiment_score: number | null;
+  danone_stance: string | null;
+  esg_category: string | null;
+  impact_summary: string | null;
+  credibility_score: number | null;
+  event_type: string | null;
+  severity: string | null;
+  affected_region: string | null;
+  affected_product: string | null;
+  financial_impact_estimate: string | null;
+  recommended_response: string | null;
+}
+
+export interface NewsEventsSummary {
+  days: number;
+  by_severity: { severity: string; count: number }[];
+  by_type: { event_type: string; count: number; avg_sentiment: number }[];
+  by_region: { region: string; count: number; critical_headlines: string[] }[];
+}
+
+export interface NewsEventsTimeline {
+  days: number;
+  timeline: {
+    scraped_date: string;
+    total: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    avg_sentiment: number;
+  }[];
 }
 
 export interface GeneratedReport {

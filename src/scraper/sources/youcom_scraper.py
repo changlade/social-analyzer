@@ -107,6 +107,38 @@ YOUCOM_TOPICS: list[dict[str, Any]] = [
     },
 ]
 
+# ── Breaking news / crisis topics (short freshness — day/week) ────────────────
+# These are scraped in addition to the ESG strategy topics above and feed
+# the gold_news_events table for crisis monitoring and recall tracking.
+
+NEWS_EVENTS_TOPICS: list[dict[str, Any]] = [
+    {
+        "query": "Danone product recall contamination safety alert withdrawal 2026",
+        "freshness": "week", "count": 10,
+        "source_type": "news", "topic": "product_recall",
+    },
+    {
+        "query": "Danone infant formula recall Asia Pacific APAC baby milk safety 2026",
+        "freshness": "week", "count": 10,
+        "source_type": "news", "topic": "crisis_apac",
+    },
+    {
+        "query": "Danone regulatory fine sanction FDA EFSA ANSES investigation 2026",
+        "freshness": "week", "count": 8,
+        "source_type": "news", "topic": "regulatory_action",
+    },
+    {
+        "query": "Danone controversy scandal criticism media backlash 2026",
+        "freshness": "day", "count": 10,
+        "source_type": "news", "topic": "crisis_media",
+    },
+    {
+        "query": "Danone share price stock earnings investor reaction analyst 2026",
+        "freshness": "week", "count": 8,
+        "source_type": "news", "topic": "market_impact",
+    },
+]
+
 DIRECT_URLS: list[dict[str, str]] = [
     {"url": "https://www.bcorporation.net/en-us/find-a-b-corp/company/danone/",
      "source_type": "official", "topic": "bcorp_profile"},
@@ -401,20 +433,30 @@ def run_youcom_scraper() -> list[dict[str, Any]]:
     """
     Run all You.com topic searches + direct URL extractions.
     Uses DatabricksMCPClient with auto-detected WorkspaceClient credentials.
+
+    Runs two passes:
+      1. ESG strategy topics (YOUCOM_TOPICS) — yearly/monthly freshness
+      2. Breaking news / crisis topics (NEWS_EVENTS_TOPICS) — daily/weekly freshness
     """
     client = _make_client()
     all_records: list[dict] = []
 
-    # 1. Topic searches
-    for i, topic in enumerate(YOUCOM_TOPICS):
+    # 1. ESG strategy topic searches
+    all_topics = YOUCOM_TOPICS + NEWS_EVENTS_TOPICS
+    for i, topic in enumerate(all_topics):
         records = scrape_topic(client, topic)
         all_records.extend(records)
-        if i < len(YOUCOM_TOPICS) - 1:
+        if i < len(all_topics) - 1:
             time.sleep(random.uniform(0.5, 1.5))
 
     # 2. Direct URL extraction
     direct_records = extract_direct_urls(client)
     all_records.extend(direct_records)
 
-    logger.info(f"You.com scraper total: {len(all_records)} records")
+    esg_count  = sum(1 for r in all_records if r.get("search_topic") not in
+                     {t["topic"] for t in NEWS_EVENTS_TOPICS})
+    news_count = sum(1 for r in all_records if r.get("search_topic") in
+                     {t["topic"] for t in NEWS_EVENTS_TOPICS})
+    logger.info(f"You.com scraper total: {len(all_records)} records "
+                f"(ESG strategy: {esg_count}, breaking news: {news_count})")
     return all_records

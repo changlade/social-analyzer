@@ -12,13 +12,13 @@ from typing import Any, List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-CATALOG      = os.getenv("CATALOG", "danonedemo_catalog")
-SCHEMA       = os.getenv("SCHEMA", "marketing")
-WAREHOUSE_ID = os.getenv("WAREHOUSE_ID", "50e0bc7f9918a201")
+CATALOG      = os.getenv("CATALOG", "canglade_demos")
+SCHEMA       = os.getenv("SCHEMA", "social_analyzer")
+WAREHOUSE_ID = os.getenv("WAREHOUSE_ID", "1c3cf138fc716ec1")
 AI_ENDPOINT  = os.getenv("AI_ENDPOINT_NAME", "danone-gpt5")
 
 _DATABRICKS_HOST = os.getenv(
-    "DATABRICKS_HOST", "https://fevm-danonedemo.cloud.databricks.com"
+    "DATABRICKS_HOST", "https://fe-vm-vdm-serverless-nmmvdg.cloud.databricks.com"
 ).rstrip("/")
 _SQL_ENDPOINT    = f"{_DATABRICKS_HOST}/api/2.0/sql/statements"
 _TIMEOUT         = 90.0   # httpx request timeout

@@ -1,12 +1,13 @@
 command: ['python', '-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', '8000']
 env:
   - name: WAREHOUSE_ID
-    value: "50e0bc7f9918a201"
+    value: "1c3cf138fc716ec1"
   - name: CATALOG
-    value: "danonedemo_catalog"
+    value: "canglade_demos"
   - name: SCHEMA
-    value: "marketing"
+    value: "social_analyzer"
   - name: AI_ENDPOINT_NAME
     value: "databricks-gpt-5-4"
-  # DATABRICKS_TOKEN and DATABRICKS_HOST are auto-injected by Databricks Apps runtime.
-  # Set them manually only for local development via a .env file (never commit secrets).
+  # DATABRICKS_TOKEN is auto-injected by the Databricks Apps runtime (M2M OAuth)
+  - name: DATABRICKS_HOST
+    value: "https://fe-vm-vdm-serverless-nmmvdg.cloud.databricks.com"

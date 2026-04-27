@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BarChart3, Globe, Layers, FileText, Activity, MessageSquare } from "lucide-react";
+import { BarChart3, Globe, Layers, FileText, Activity, MessageSquare, Siren } from "lucide-react";
 import { cn } from "../lib/utils";
 
 const NAV = [
   { to: "/",             icon: Activity,       label: "Overview"      },
   { to: "/insights",     icon: BarChart3,      label: "Insights"      },
   { to: "/impact-delta", icon: Layers,         label: "Impact Delta"  },
+  { to: "/news-events",  icon: Siren,          label: "News Events"   },
   { to: "/sources",      icon: Globe,          label: "Sources"       },
   { to: "/reports",      icon: FileText,       label: "Report Builder"},
   { to: "/chat",         icon: MessageSquare,  label: "AI Assistant"  },

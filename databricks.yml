@@ -49,9 +49,21 @@ variables:
     default: "0 4 * * *"
 
 targets:
-  # ── Development (default) ────────────────────────────────────────────────────
-  dev:
+  # ── fe-vm-vdm-serverless (DEFAULT profile) ───────────────────────────────────
+  vdm:
     default: true
+    workspace:
+      host: https://fe-vm-vdm-serverless-nmmvdg.cloud.databricks.com
+    variables:
+      catalog: canglade_demos
+      schema: social_analyzer
+      volume_name: social_landing
+      warehouse_id: 1c3cf138fc716ec1
+      ai_endpoint_name: databricks-meta-llama-3-3-70b-instruct
+      app_name: danone-social-analyzer
+
+  # ── danonedemo (legacy) ───────────────────────────────────────────────────────
+  dev:
     workspace:
       host: https://fevm-danonedemo.cloud.databricks.com
     variables:
