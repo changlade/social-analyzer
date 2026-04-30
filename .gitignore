@@ -14,6 +14,9 @@ dist/
 # Databricks bundle state
 .databricks/
 
+# app.yaml contains deployment secrets — managed locally, not in git
+apps/social-analyzer/backend/app.yaml
+
 # Frontend build intermediaries (keep static/assets/ tracked for bundle deploy)
 apps/social-analyzer/frontend/node_modules/
 apps/social-analyzer/frontend/dist/
