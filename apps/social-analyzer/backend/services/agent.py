@@ -34,8 +34,62 @@ _DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST", "https://fe-vm-vdm-serverle
 _SERVING_ENDPOINT = os.environ.get("AI_ENDPOINT_NAME", "databricks-gpt-5-4")
 _AI_ENDPOINT_URL  = f"{_DATABRICKS_HOST}/serving-endpoints/{_SERVING_ENDPOINT}/invocations"
 _AI_ENDPOINT_NAME = _SERVING_ENDPOINT
-_CATALOG = os.environ.get("CATALOG", "danonedemo_catalog")
-_SCHEMA  = os.environ.get("SCHEMA", "marketing")
+_CATALOG = os.environ.get("CATALOG", "canglade_demos")
+_SCHEMA  = os.environ.get("SCHEMA", "social_analyzer")
+
+# ── Table schema documentation for the LLM ───────────────────────────────────
+# Injected into tool descriptions so the model generates correct SQL.
+
+_GOLD_TABLES_DOC = f"""
+All tables are in catalog `{_CATALOG}`, schema `{_SCHEMA}`.
+Always qualify table names fully: `{_CATALOG}.{_SCHEMA}.<table>` — or just `<table>` since the catalog/schema context is set.
+
+Available gold tables and their key columns:
+
+**gold_esg_insights** — one row per article, ESG-classified
+  article_id, url, title, content_preview, clean_content,
+  source_type (official|news|social|ngo|benchmark|rss),
+  search_topic (e.g. bcorp_profile, greenwashing, worker_sentiment, general_news),
+  esg_category (Environmental|Social|Governance|Cross-ESG|Crisis|Unknown),
+  esg_sub_theme, impact_summary, credibility_score (0-1),
+  sentiment_label (positive|neutral|negative),
+  sentiment_score (-1.0 to +1.0),
+  danone_stance (supportive|critical|neutral|mixed),
+  published_at (timestamp), scraped_date (date)
+
+**gold_csr_claims** — official CSR claims from Danone docs/filings
+  claim_id, esg_category, sub_theme, claim_text, metric, timeframe,
+  claim_type (target|achievement|policy|commitment),
+  credibility_score, url, scraped_date
+
+**gold_public_sentiment** — weekly public sentiment aggregated by ESG category
+  week_start (date), esg_category, avg_sentiment (-1 to +1),
+  mention_count, key_topics (array<string>),
+  positive_count, negative_count, critical_count
+
+**gold_impact_delta** — gap analysis between CSR claims and public perception
+  delta_id, esg_category, sub_theme, claim_count, total_articles,
+  period_avg_sentiment, pct_critical, dominant_sentiment,
+  alignment_score_quick (0-100), alignment_label (aligned|mixed|divergent|critical),
+  gap_headline, official_narrative, public_narrative,
+  marketing_opportunity, risk_level (low|medium|high|critical),
+  analysis_date
+
+**gold_daily_summary** — daily AI executive brief (one row per day)
+  report_date, total_articles, unique_sources, avg_sentiment,
+  top_esg_themes (array), reputational_risks (array),
+  opportunities (array), headline, executive_brief, top_risk,
+  top_opportunity, esg_pulse_json, recommended_actions (array)
+
+**gold_news_events** — breaking news events with AI crisis classification
+  article_id, url, title, content_preview, source_type, search_topic,
+  scraped_date, published_at, sentiment_label, sentiment_score,
+  danone_stance, esg_category, impact_summary, credibility_score,
+  event_type (recall|regulatory|financial|reputational|positive|other),
+  severity (low|medium|high|critical),
+  affected_region, affected_product,
+  financial_impact_estimate, recommended_response
+"""
 
 # ── Tool definitions (OpenAI function format) ─────────────────────────────────
 
@@ -124,21 +178,21 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "query_gold_layer",
             "description": (
-                "Run a read-only SQL query against the Gold-layer Delta tables in the "
-                "danonedemo_catalog.marketing schema. Available tables:\n"
-                "  - gold_esg_insights: per-article ESG classification + sentiment\n"
-                "  - gold_csr_claims: structured CSR claims from official sources\n"
-                "  - gold_public_sentiment: weekly public sentiment by ESG category\n"
-                "  - gold_impact_delta: alignment/gap analysis between CSR and public reality\n"
-                "  - gold_daily_summary: daily executive brief\n"
-                "Use LIMIT to avoid returning too many rows."
+                f"Run a read-only SQL query against the Gold-layer Delta tables "
+                f"(catalog: {_CATALOG}, schema: {_SCHEMA}). "
+                "Use this for ESG insights, sentiment trends, CSR claims, impact delta analysis, or daily summaries.\n\n"
+                + _GOLD_TABLES_DOC
+                + "\nAlways use bare table names (no catalog/schema prefix) and include LIMIT ≤ 50."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "sql": {
                         "type": "string",
-                        "description": "Read-only SQL (SELECT only). Always include LIMIT.",
+                        "description": (
+                            "SELECT-only SQL. Use bare table names (gold_esg_insights, gold_csr_claims, etc.). "
+                            "Always include LIMIT. Example: SELECT title, sentiment_score, esg_category FROM gold_esg_insights ORDER BY scraped_date DESC LIMIT 10"
+                        ),
                     },
                 },
                 "required": ["sql"],
@@ -150,23 +204,16 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "query_news_events",
             "description": (
-                "Query recent breaking news events, product recalls, regulatory sanctions, "
-                "and crises involving Danone from the gold_news_events table. "
-                "This table is specifically designed for crisis and incident analysis and includes:\n"
-                "  - event_type: recall | regulatory | financial | reputational | positive | other\n"
-                "  - severity: low | medium | high | critical\n"
-                "  - affected_region: geographic region (e.g. APAC, Europe, Global)\n"
-                "  - affected_product: specific product or product line\n"
-                "  - financial_impact_estimate: estimated financial exposure\n"
-                "  - recommended_response: AI-suggested communication action\n"
-                "  - sentiment_score, impact_summary, credibility_score\n"
-                "Use this tool (instead of query_gold_layer) for any question about:\n"
-                "  - Product recalls or safety alerts\n"
-                "  - Regulatory fines or investigations (FDA, EFSA, etc.)\n"
-                "  - APAC crisis events or infant formula issues\n"
-                "  - Media controversies and reputational risks\n"
-                "  - Market/investor impact from negative events\n"
-                "Always include LIMIT. Filter by severity or event_type when relevant."
+                f"Query the gold_news_events table (catalog: {_CATALOG}, schema: {_SCHEMA}) "
+                "for breaking news events, product recalls, regulatory sanctions, and crises.\n"
+                "Columns: article_id, url, title, content_preview, source_type, search_topic, "
+                "scraped_date, published_at, sentiment_label, sentiment_score, danone_stance, "
+                "esg_category, impact_summary, credibility_score, "
+                "event_type (recall|regulatory|financial|reputational|positive|other), "
+                "severity (low|medium|high|critical), "
+                "affected_region, affected_product, financial_impact_estimate, recommended_response.\n"
+                "Use for: recalls, APAC crises, regulatory fines, media controversies, market impact. "
+                "Always include LIMIT."
             ),
             "parameters": {
                 "type": "object",
@@ -174,11 +221,8 @@ TOOL_DEFINITIONS = [
                     "sql": {
                         "type": "string",
                         "description": (
-                            "Read-only SQL (SELECT only). Always include LIMIT. "
-                            "Table name: gold_news_events. "
-                            "Key columns: event_type, severity, affected_region, affected_product, "
-                            "financial_impact_estimate, recommended_response, title, url, "
-                            "scraped_date, sentiment_score, impact_summary."
+                            "SELECT-only SQL. Use bare table name: gold_news_events. Always include LIMIT. "
+                            "Example: SELECT title, severity, event_type, affected_region, recommended_response FROM gold_news_events ORDER BY scraped_date DESC LIMIT 10"
                         ),
                     },
                 },
@@ -188,7 +232,7 @@ TOOL_DEFINITIONS = [
     },
 ]
 
-SYSTEM_PROMPT = """You are an expert ESG and crisis communications analyst for Danone, powered by AI.
+SYSTEM_PROMPT = f"""You are an expert ESG and crisis communications analyst for Danone, powered by AI.
 
 Your role is to help marketing and strategy teams understand:
 - Danone's official CSR/ESG claims and commitments
@@ -197,37 +241,37 @@ Your role is to help marketing and strategy teams understand:
 - Breaking news events: product recalls, regulatory actions, APAC crises, reputational risks
 - ESG risks and marketing opportunities
 
-You have access to six tools:
-
-**For data already ingested in our pipeline (fast, structured):**
-1. query_gold_layer — query Gold Delta tables (ESG insights, CSR claims, impact delta, daily summary)
-2. query_news_events — query gold_news_events table for recalls, regulatory actions, crises (preferred for incident questions)
-
-**For live web search (real-time, external):**
-3. youcom_search — semantic web search. Use with appropriate freshness:
-   - freshness="day"   → breaking news within 24h (use for active crises/recalls)
-   - freshness="week"  → past 7 days (use for recent incidents/regulatory actions)
-   - freshness="month" → past 30 days (use for recent ESG news)
-   - freshness="year"  → past year (use for strategic/annual reports)
-4. youcom_scrape — extract full content from specific URLs
-
-**For difficult sites (residential proxy):**
-5. brightdata_scrape — scrape Glassdoor, LinkedIn, paywalled pages
-6. brightdata_search — Google search via Brightdata
+**Data catalog:** All pipeline tables are in `{_CATALOG}.{_SCHEMA}`.
+When writing SQL, use bare table names only (e.g. `gold_esg_insights`, NOT `{_CATALOG}.{_SCHEMA}.gold_esg_insights`) — the database context is set automatically.
 
 **Tool selection guidelines:**
-- Product recalls, safety alerts, APAC infant formula issues → use query_news_events FIRST, then youcom_search with freshness="week" or "day"
-- Regulatory fines, FDA/EFSA investigations → query_news_events + youcom_search freshness="week"
-- Media controversy, reputational crisis → query_news_events + youcom_search freshness="day"
-- ESG strategy, annual reports, B Corp scores → query_gold_layer + youcom_search freshness="year"
-- Employee sentiment, working conditions → query_gold_layer + brightdata_scrape for Glassdoor
-- Impact gap analysis → query_gold_layer (gold_impact_delta table)
+
+For structured data (use first — it's fast and always available):
+- General ESG analysis, sentiment trends → query_gold_layer (gold_esg_insights, gold_public_sentiment)
+- CSR claims, what Danone officially says → query_gold_layer (gold_csr_claims)
+- Gap between claims and public reality → query_gold_layer (gold_impact_delta)
+- Daily executive summary → query_gold_layer (gold_daily_summary)
+- Recalls, regulatory actions, crises → query_news_events (gold_news_events)
+
+For live web search (use when structured data is insufficient or stale):
+- youcom_search with freshness="year" for annual reports, B Corp scores, strategy
+- youcom_search with freshness="month" for recent news
+- youcom_search with freshness="week" or "day" for active crises, breaking news
+- brightdata_search / brightdata_scrape for Glassdoor, LinkedIn, paywalled pages
+
+**SQL rules — CRITICAL:**
+- ALWAYS use bare table names: `gold_esg_insights`, `gold_csr_claims`, etc.
+- NEVER include catalog/schema prefix in SQL
+- ALWAYS include LIMIT (max 50)
+- Use ONLY columns that exist in the table schema (see tool descriptions)
+- For text search: use LIKE or LOWER(column) LIKE '%keyword%'
+- For date filters: scraped_date >= CURRENT_DATE() - INTERVAL 30 DAYS
 
 **General guidelines:**
-- Always use tools to ground your answers in real data. Never fabricate statistics or events.
-- Cite your sources. Include URLs when referencing web content.
-- For crisis questions, combine query_news_events (what we've already indexed) with a fresh youcom_search to check for very recent developments.
-- Be concise but insightful. Flag severity, affected regions, and recommended responses clearly.
+- Start with query_gold_layer or query_news_events before going to web search
+- If a SQL query returns no results, try broadening the filter (remove WHERE clauses, increase LIMIT)
+- If structured data is empty or insufficient, supplement with youcom_search
+- Never fabricate statistics or events. Cite URLs when referencing web content.
 - Respond in the same language as the user's question."""
 
 
@@ -286,9 +330,23 @@ async def _dispatch_tool(name: str, args: dict) -> str:
             # Safety guard: only allow SELECT statements
             if not sql.upper().lstrip().startswith("SELECT"):
                 return "Error: only SELECT statements are allowed."
-            rows = execute_query(sql)
+            # Strip any fully-qualified prefixes the model may have added
+            import re as _re
+            sql_clean = _re.sub(
+                rf'\b{_re.escape(_CATALOG)}\.{_re.escape(_SCHEMA)}\.',
+                '',
+                sql,
+                flags=_re.IGNORECASE
+            )
+            rows = execute_query(sql_clean)
             if not rows:
-                return "Query returned no results."
+                return (
+                    "Query returned no results. "
+                    "Try: (1) remove or broaden WHERE filters, "
+                    "(2) increase LIMIT, "
+                    "(3) check column names match the schema in the tool description, "
+                    f"(4) confirm the table has data by running: SELECT COUNT(*) FROM gold_esg_insights"
+                )
             # Format as markdown table
             headers = list(rows[0].keys())
             header_row = " | ".join(headers)
@@ -358,7 +416,7 @@ async def run_agent(user_message: str, history: list[dict] | None = None) -> Asy
 
     messages.append({"role": "user", "content": user_message})
 
-    max_iterations = 6  # prevent infinite loops
+    max_iterations = 8  # prevent infinite loops
     iteration = 0
 
     try:
